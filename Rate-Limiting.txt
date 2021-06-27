@@ -1,0 +1,91 @@
+Rate Limiting:
+Using Bucket4j
+
+---------------
+What is API rate limiting ?
+-- Limiting the api access withing a given timeframe i.e limiting number of call per given time frame.
+-- Benefits: 
+   -- This help to defend the api aginst overuses both unintentional and malicious access.
+   -- It help in deciding various api access pricing e.g
+      -- Free(External consumers): 5 requests per min per API client
+	  -- Basic(External premium customer): 5 requests per sec per API client
+	  -- Professional(Trusted partners): 20 requests per sec per API client
+	  -- Internal(Internal to organization): Unlimited
+
+It can be implemented by tracking the IP of clients or by api access token provided to the clients.
+
+What are diff ways to handle the rate limited api when user excced the limit?
+Api developer can choose any of below
+-- Queing the request untill remaining time span is elapsed.[very less used]
+-- Allowing access immediately but charging extra amount for that request.[Used by some api provider]
+-- Rejecting the requests(Status code 429, Too many requests)[Most commonly used]
+
+1. Using Bucket4j lib
+What is Bucket4j ? 
+   A thread-safe, java lib, using token-bucket based algorithm.
+   It can be used in Standalone JVM or Clustered JVM/env.
+   It also support in-memory and distributed caching.
+   
+How it's working ?
+Initially creating the bucket with some bucket size, let's say size=100
+Whenever a consumer wants to access an API endpoint, it must get a token from the bucket.
+Whenever a consumer call api, remove a token from bucket untill it became empty.
+Once bucket is empty start rejecting requests untill again it's filled with tokens.
+So, bucket needs to be filled in regular time interval.
+
+e.g Rate limiting 100 api call per min.
+Suppose, let say Bucket size = 100
+At any point 70 consumers are using token, 
+-- token in use = 70 in 50 sec
+-- token left in bucket = 30 in 50 sec
+-- 30 more consumer can use within remaining time out of 1 min i.e in 10 sec.
+At any point if bucket is empty then remaining request will be regected untill time reaches 1 min.
+In every 1 min interval bucket will be filled up with #(100 - <#remaining token in bucket>) tokens.
+e.g:
+If we receive 70 requests, which is fewer than the available tokens in a given minute, 
+we would add only 30 more tokens at the start of the next minute to bring the bucket up to capacity. 
+On the other hand, if we exhaust all the tokens in 40 seconds, 
+we would wait for 20 seconds to refill the bucket.
+
+
+Steps:
+1. 
+<!-- https://mvnrepository.com/artifact/com.github.vladimir-bukhtoyarov/bucket4j-core -->
+<dependency>
+    <groupId>com.github.vladimir-bukhtoyarov</groupId>
+    <artifactId>bucket4j-core</artifactId>
+    <version>6.2.0</version>
+</dependency>
+
+2.
+The Bucket interface represents the token bucket with a maximum capacity.
+	It provides methods such as tryConsume and tryConsumeAndReturnRemaining for consuming tokens.
+The Bandwidth class is defines the limits of the bucket. 
+	We use Bandwidth to configure the capacity of the bucket and the rate of refill.
+The Refill class is used to define the fixed rate at which tokens are added to the bucket. 
+	We can configure the rate as the number of tokens that would be added in a given time period.
+The tryConsumeAndReturnRemaining method in Bucket returns ConsumptionProbe. 
+	ConsumptionProbe contains, along with the result of consumption, 
+	the status of the bucket such as the tokens remaining, 
+	or the time remaining until the requested tokens are available in the bucket again.
+
+3. Create the PricingPlan.java
+	1. Defining 4 pricing plan(per min): FREE(5),BASIC(60),PROFESSIONAL(120),INTERNAL(240);      
+	2. Defining bucket filling strategy/speed in which token is generated [Refill refill = Refill.intervally(bucketCapacity, Duration.ofMinutes(1));]
+	3. Specify the token-bucket filling algorithm or bucket limit
+4. Create PricingPlanService.java to Resolve the bucket
+5. Create Interceptor to intercept all call, RateLimitHandlerInterceptor.java
+	1. Override preHandle
+	2. Get the apikey from header
+	3. resolve the bucket
+	4. consume 1 token and get remaining count of token as ConsumptionProbe
+	5. Add remaining count in response header if token consumed
+	6. else Add error in response header, and return false means call will be termineted 
+	7. call forwared to to controller
+	
+	
+Ref: https://www.baeldung.com/spring-bucket4j
+
+
+
+
